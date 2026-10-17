@@ -134,4 +134,7 @@ target_link_libraries(test_metrics PRIVATE
     sqlite3
 )
 
+if(UNIX)
+    target_link_libraries(test_metrics PRIVATE pthread dl)
+endif()
 gtest_discover_tests(test_metrics)
