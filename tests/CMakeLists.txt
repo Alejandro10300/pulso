@@ -138,3 +138,17 @@ if(UNIX)
     target_link_libraries(test_metrics PRIVATE pthread dl)
 endif()
 gtest_discover_tests(test_metrics)
+
+add_executable(test_formatter_json
+    formatters/test_formatter_json.cpp
+    ${PROJECT_SOURCE_DIR}/src/formatters/formatter_json.cpp
+)
+target_include_directories(test_formatter_json PRIVATE
+    ${PROJECT_SOURCE_DIR}/src
+)
+target_link_libraries(test_formatter_json PRIVATE
+    GTest::gtest
+    GTest::gtest_main
+    nlohmann_json
+)
+gtest_discover_tests(test_formatter_json)
