@@ -9,6 +9,7 @@ y este proyecto sigue el versionado [SemVer](https://semver.org/lang/es/).
 
 ### Añadido
 - fix(http): activar endpoint GET /config (#833)
+- fix(http): activar endpoint GET /metrics (#832)
 - Documentación inicial del proyecto
 - Organización inicial de directorios
 - Configuración base del sistema
