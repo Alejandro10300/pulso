@@ -103,6 +103,17 @@ Config mapear(const toml::table& doc)
         leer<std::string>(doc, "storage", "ruta_db",
                           cfg.storage.ruta_db);
 
+    // [umbrales]
+    cfg.umbrales.cpu_max =
+        leer<double>(doc, "umbrales", "cpu_max", cfg.umbrales.cpu_max);
+
+    cfg.umbrales.ram_max =
+        leer<double>(doc, "umbrales", "ram_max", cfg.umbrales.ram_max);
+
+    cfg.umbrales.disco_max =
+        leer<double>(doc, "umbrales", "disco_max", cfg.umbrales.disco_max);
+
+
 
     // nivel_log (clave raíz)
     cfg.nivel_log =

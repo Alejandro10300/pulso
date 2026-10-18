@@ -22,3 +22,8 @@ intervalo_segundos = 10
 # Ruta del archivo de base de datos SQLite.
 # Puede ser relativa al directorio de ejecución o absoluta.
 ruta_db = "pulso.db"
+
+[umbrales]
+cpu_max = 80.0
+ram_max = 85.0
+disco_max = 90.0

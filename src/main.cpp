@@ -1,3 +1,6 @@
+
+
+#include "alertas/gestor_alertas.hpp"
 #include <iostream>
 #include <memory>
 #include <thread>
@@ -25,6 +28,10 @@
 #include "collectors/disk/disk_usage.h"
 #include "collectors/network/net_usage.h"
 #include "platform/linux/collector_cpu.hpp"
+#include "collectors/procesos/proc_collector.h"
+#include "collectors/loadavg/loadavg_collector.h"
+#include "collectors/uptime/uptime_collector.h"
+#include "collectors/temperatura/temp_collector.h"
 
 // Sampler
 #include "sampler/sampler.hpp"
@@ -51,6 +58,78 @@
 // Signal handler
 extern std::atomic<bool> isRunning;
 void setupSignalHandler();
+class CollectorProcesos : public pulso::collectors::ICollector {
+public:
+    std::string nombre() const override {
+        return "procesos";
+    }
+
+    std::vector<pulso::core::Metrica> recolectar() override {
+        pulso::collectors::ProcInfo info = pulso::collectors::getProcInfo();
+        auto ts = std::time(nullptr);
+
+        return {
+            {"procesos.running", static_cast<double>(info.running), "cantidad", ts},
+            {"procesos.blocked", static_cast<double>(info.blocked), "cantidad", ts},
+            {"procesos.total", static_cast<double>(info.total), "cantidad", ts}
+        };
+    }
+};
+
+class CollectorLoadAvg : public pulso::collectors::ICollector {
+public:
+    std::string nombre() const override {
+        return "loadavg";
+    }
+
+    std::vector<pulso::core::Metrica> recolectar() override {
+        LoadAvgInfo info = getLoadAverage();
+        auto ts = std::time(nullptr);
+
+        return {
+            {"loadavg.1", static_cast<double>(info.load1), "carga", ts},
+            {"loadavg.5", static_cast<double>(info.load5), "carga", ts},
+            {"loadavg.15", static_cast<double>(info.load15), "carga", ts}
+        };
+    }
+};
+
+class CollectorUptime : public pulso::collectors::ICollector {
+public:
+    std::string nombre() const override {
+        return "uptime";
+    }
+
+    std::vector<pulso::core::Metrica> recolectar() override {
+        UptimeInfo info = getUptime();
+        auto ts = std::time(nullptr);
+
+        return {
+            {"uptime.seconds", static_cast<double>(info.total_seconds), "segundos", ts}
+        };
+    }
+};
+
+class CollectorTemperatura : public pulso::collectors::ICollector {
+public:
+    std::string nombre() const override {
+        return "temperatura";
+    }
+
+    std::vector<pulso::core::Metrica> recolectar() override {
+        ::collectors::TempInfo info = ::collectors::getTempInfo();
+
+        if (!info.disponible) {
+            return {};
+        }
+
+        auto ts = std::time(nullptr);
+
+        return {
+            {"temperatura.cpu", static_cast<double>(info.cpu_celsius), "celsius", ts}
+        };
+    }
+};
 
 // ============================================
 // NUEVO: Funcion helper para modo once
@@ -127,6 +206,50 @@ std::string output = formatter->formatear(snapshot);
     log.info("Modo once: completado. Saliendo con codigo 0.");
     return 0;
 }
+
+/**
+ * @brief Convierte el Snapshot del sampler (lista de métricas) al
+ *        MetricSnapshot que evalúa GestorAlertas.
+ *
+ * CPU llega en porcentaje. Disco y RAM llegan en bytes, así que se
+ * convierten a porcentaje para poder compararlos con los umbrales.
+ */
+static pulso::MetricSnapshot construirMetricSnapshot(
+    const pulso::core::Snapshot& snap)
+{
+    pulso::MetricSnapshot ms;
+
+    double discoUsado = 0.0;
+    double discoTotal = 0.0;
+
+    for (const auto& m : snap.metricas) {
+        if (m.nombre == "cpu.usage") {
+            ms.cpu = m.valor;
+        } else if (m.nombre == "disk.used") {
+            discoUsado = m.valor;
+        } else if (m.nombre == "disk.total") {
+            discoTotal = m.valor;
+        }
+    }
+
+    if (discoTotal > 0.0) {
+        ms.disk = discoUsado / discoTotal * 100.0;
+    }
+
+    // La métrica "memory.used" no trae el total, así que se consulta aparte.
+    try {
+        const auto ram = pulso::collectors::memory::getRamUsage();
+        if (ram.total > 0) {
+            ms.ram = static_cast<double>(ram.used) /
+                     static_cast<double>(ram.total) * 100.0;
+        }
+    } catch (const std::exception&) {
+        // Si no se puede leer la RAM, queda en 0 y no dispara alerta.
+    }
+
+    return ms;
+}
+
 
 // ============================================
 // MAIN
@@ -216,6 +339,22 @@ int main(int argc, char* argv[]) {
     collectors.push_back(
         std::make_shared<pulso::collectors::network::NetworkCollector>()
     );
+    collectors.push_back(
+        std::make_shared<CollectorProcesos>()
+    );
+
+    collectors.push_back(
+        std::make_shared<CollectorLoadAvg>()
+    );
+
+    collectors.push_back(
+        std::make_shared<CollectorUptime>()
+    );
+
+    collectors.push_back(
+        std::make_shared<CollectorTemperatura>()
+    );
+
 
     // =========================================================================
     // MODO ONCE
@@ -235,14 +374,38 @@ int main(int argc, char* argv[]) {
     // Abrir base de datos e inicializar esquema
     pulso::storage::Storage storage(cfg.storage.ruta_db);
     pulso::storage::inicializarEsquema(storage);
+    
+    
+    // Gestor de alertas con umbrales leídos desde pulso.toml
+    pulso::alertas::GestorAlertas gestorAlertas;
+    gestorAlertas.addAlerta(pulso::alertas::AlertaUmbral(
+        "cpu", static_cast<float>(cfg.umbrales.cpu_max), '>'));
+    gestorAlertas.addAlerta(pulso::alertas::AlertaUmbral(
+        "ram", static_cast<float>(cfg.umbrales.ram_max), '>'));
+    gestorAlertas.addAlerta(pulso::alertas::AlertaUmbral(
+        "disk", static_cast<float>(cfg.umbrales.disco_max), '>'));
 
-    // Sampler (bucle infinito de coleccion)
+    // Cuando una alerta se dispara, queda registrada en el log
+    gestorAlertas.setCallback([](const std::string& mensaje) {
+        pulso::utils::logging::Logger::instancia().warn(mensaje);
+    });
+
+    log.info("GestorAlertas activo -> Umbrales: CPU=" +
+             std::to_string(cfg.umbrales.cpu_max) + "%, RAM=" +
+             std::to_string(cfg.umbrales.ram_max) + "%, Disco=" +
+             std::to_string(cfg.umbrales.disco_max) + "%");
+
+    // Sampler (bucle de colección); en cada ciclo evalúa las alertas
     pulso::sampler::Sampler sampler(
         collectors,
         storage,
-        cfg.sampler.intervalo_segundos
+        cfg.sampler.intervalo_segundos,
+        [&gestorAlertas](const pulso::core::Snapshot& snap) {
+            gestorAlertas.evaluar(construirMetricSnapshot(snap));
+        }
     );
     sampler.iniciar();
+
 
     // Signal handler
     setupSignalHandler();

@@ -9,10 +9,12 @@ namespace pulso::sampler {
 Sampler::Sampler(
     std::vector<std::shared_ptr<pulso::collectors::ICollector>> collectors,
     pulso::storage::Storage& storage,
-    int intervaloSegundos)
+    int intervaloSegundos,
+    SnapshotCallback onSnapshot)
     : collectors_(std::move(collectors)),
       storage_(storage),
-      intervaloSegundos_(intervaloSegundos) {}
+      intervaloSegundos_(intervaloSegundos),
+      onSnapshot_(std::move(onSnapshot)) {}
 
 Sampler::~Sampler() {
     detener();
@@ -59,6 +61,16 @@ void Sampler::iniciar() {
                 std::cerr << "Error al guardar snapshot: "
                           << e.what()
                           << std::endl;
+            }
+            
+                        if (onSnapshot_) {
+                try {
+                    onSnapshot_(snapshot);
+                } catch (const std::exception& e) {
+                    std::cerr << "Error al evaluar snapshot: "
+                              << e.what()
+                              << std::endl;
+                }
             }
 
             std::unique_lock<std::mutex> lock(mutex_);

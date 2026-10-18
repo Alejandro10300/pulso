@@ -8,6 +8,7 @@ target_sources(pulso PRIVATE
     collectors/memory/ram_usage.cpp
     collectors/network/network_io.cpp
     collectors/network/net_usage.cpp
+    collectors/uptime/uptime_collector.cpp
     collectors/loadavg/loadavg_collector.cpp
     collectors/procesos/proc_collector.cpp
     collectors/procesos/top_procesos.cpp
