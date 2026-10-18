@@ -145,7 +145,8 @@ std::optional<pulso::core::Snapshot> Storage::last() const {
     SQLite::Statement query(
         db_,
         "SELECT timestamp, nombre, valor, unidad "
-        "FROM snapshots ORDER BY timestamp DESC LIMIT 1;"
+        "FROM snapshots WHERE timestamp = (SELECT MAX(timestamp) FROM snapshots) "
+        "ORDER BY rowid ASC;"
     );
 
     if (!query.executeStep()) {
